@@ -296,15 +296,9 @@ class ChatifyMessenger
      * @param Collection $user
      * @return Collection
      */
-    public function getUserWithAvatar($user)
+    public function getUserWithAvatar($user): string
     {
-        if ($user->avatar == 'avatar.png' && config('chatify.gravatar.enabled')) {
-            $imageSize = config('chatify.gravatar.image_size');
-            $imageset = config('chatify.gravatar.imageset');
-            $user->avatar = 'https://www.gravatar.com/avatar/' . md5(strtolower(trim($user->email))) . '?s=' . $imageSize . '&d=' . $imageset;
-        } else {
-            $user->avatar = $this->getUserAvatarUrl($user->avatar);
-        }
+        $user->avatar = $user->getAvatarUrl();
         return $user;
     }
 
@@ -432,9 +426,9 @@ class ChatifyMessenger
      * @param string $user_avatar_name
      * @return string
      */
-    public function getUserAvatarUrl($user_avatar_name)
+    public function getUserAvatarUrl($user_avatar_name): string
     {
-        return self::storage()->url(config('chatify.user_avatar.folder') . '/' . $user_avatar_name);
+        return 'https://avatars.cloudflare.steamstatic.com/' . $user_avatar_name . '.jpg';
     }
 
     /**
