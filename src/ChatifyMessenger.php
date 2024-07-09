@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Storage;
 use Pusher\Pusher;
 use Illuminate\Support\Facades\Auth;
 use Exception;
+use Illuminate\Support\Facades\Cache;
 
 class ChatifyMessenger
 {
@@ -201,7 +202,7 @@ class ChatifyMessenger
     public function fetchMessagesQuery($user_id)
     {
         return Message::where('from_id', $this->getUser()->id)->where('to_id', $user_id)
-                    ->orWhere('from_id', $user_id)->where('to_id', $this->getUser()->id);
+            ->orWhere('from_id', $user_id)->where('to_id', $this->getUser()->id);
     }
 
     /**
@@ -231,9 +232,9 @@ class ChatifyMessenger
     public function makeSeen($user_id)
     {
         Message::Where('from_id', $user_id)
-                ->where('to_id', $this->getUser()->id)
-                ->where('seen', 0)
-                ->update(['seen' => 1]);
+            ->where('to_id', $this->getUser()->id)
+            ->where('seen', 0)
+            ->update(['seen' => 1]);
         return 1;
     }
 
@@ -283,7 +284,7 @@ class ChatifyMessenger
                 'user' => $this->getUserWithAvatar($user),
                 'lastMessage' => $lastMessage,
                 'unseenCounter' => $unseenCounter,
-                ])->render();
+            ])->render();
         } catch (\Throwable $th) {
             throw new Exception($th->getMessage());
         }
@@ -302,7 +303,7 @@ class ChatifyMessenger
             $imageset = config('chatify.gravatar.imageset');
             $user->avatar = 'https://www.gravatar.com/avatar/' . md5(strtolower(trim($user->email))) . '?s=' . $imageSize . '&d=' . $imageset;
         } else {
-            $user->avatar = self::getUserAvatarUrl($user->avatar);
+            $user->avatar = $this->getUserAvatarUrl($user->avatar);
         }
         return $user;
     }
@@ -316,7 +317,7 @@ class ChatifyMessenger
     public function inFavorite($user_id): bool
     {
         return Favorite::where('user_id', $this->getUser()->id)
-                        ->where('favorite_id', $user_id)->count() > 0;
+                ->where('favorite_id', $user_id)->count() > 0;
     }
 
     /**
@@ -360,7 +361,7 @@ class ChatifyMessenger
                     $attachment = json_decode($msg->attachment);
                     // determine the type of the attachment
                     in_array(pathinfo($attachment->new_name, PATHINFO_EXTENSION), $this->getAllowedImages())
-                    ? array_push($images, $attachment->new_name) : '';
+                        ? array_push($images, $attachment->new_name) : '';
                 }
             }
         }
@@ -449,7 +450,7 @@ class ChatifyMessenger
 
     public function getUser(): User {
         if(!isset($this->user)) {
-            if(self::asModerator()) {
+            if($this->asModerator()) {
                 $this->user = User::where('steam_id', '00000000000000001')->first();
             } else {
                 $this->user = Auth::user();
@@ -457,5 +458,33 @@ class ChatifyMessenger
         }
 
         return $this->user;
+    }
+
+    public function asModerator(): bool
+    {
+        if(!isset($this->moderator)) {
+            $this->moderator = session()->has('chat_moderation_mode') &&
+                session()->get('chat_moderation_mode') &&
+                auth()->check() &&
+                auth()->user()->canChatModeration();
+        }
+
+        return $this->moderator;
+    }
+
+    public function getModeratorId(): int
+    {
+        if(Cache::has('chat_moderator_id')) {
+            return Cache::get('chat_moderator_id');
+        } else {
+            $moderator = User::where('steam_id', '00000000000000001')->first();
+
+            if($moderator) {
+                Cache::set('chat_moderator_id', $moderator->id);
+                return $moderator->id;
+            } else {
+                abort(404);
+            }
+        }
     }
 }
