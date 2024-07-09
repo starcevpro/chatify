@@ -4,6 +4,7 @@ namespace Chatify;
 
 use App\Models\ChMessage as Message;
 use App\Models\ChFavorite as Favorite;
+use App\Models\User;
 use Illuminate\Support\Facades\Storage;
 use Pusher\Pusher;
 use Illuminate\Support\Facades\Auth;
@@ -12,6 +13,10 @@ use Exception;
 class ChatifyMessenger
 {
     public $pusher;
+
+    public User $user;
+    public bool $moderator;
+    public int $moderator_id;
 
     /**
      * Get max file's upload size in MB.
@@ -164,7 +169,7 @@ class ChatifyMessenger
             ],
             'timeAgo' => $msg->created_at->diffForHumans(),
             'created_at' => $msg->created_at->toIso8601String(),
-            'isSender' => ($msg->from_id == Auth::user()->id),
+            'isSender' => ($msg->from_id == $this->getUser()->id),
             'seen' => $msg->seen,
         ];
     }
@@ -195,8 +200,8 @@ class ChatifyMessenger
      */
     public function fetchMessagesQuery($user_id)
     {
-        return Message::where('from_id', Auth::user()->id)->where('to_id', $user_id)
-                    ->orWhere('from_id', $user_id)->where('to_id', Auth::user()->id);
+        return Message::where('from_id', $this->getUser()->id)->where('to_id', $user_id)
+                    ->orWhere('from_id', $user_id)->where('to_id', $this->getUser()->id);
     }
 
     /**
@@ -226,7 +231,7 @@ class ChatifyMessenger
     public function makeSeen($user_id)
     {
         Message::Where('from_id', $user_id)
-                ->where('to_id', Auth::user()->id)
+                ->where('to_id', $this->getUser()->id)
                 ->where('seen', 0)
                 ->update(['seen' => 1]);
         return 1;
@@ -251,7 +256,7 @@ class ChatifyMessenger
      */
     public function countUnseenMessages($user_id)
     {
-        return Message::where('from_id', $user_id)->where('to_id', Auth::user()->id)->where('seen', 0)->count();
+        return Message::where('from_id', $user_id)->where('to_id', $this->getUser()->id)->where('seen', 0)->count();
     }
 
     /**
@@ -308,11 +313,10 @@ class ChatifyMessenger
      * @param int $user_id
      * @return boolean
      */
-    public function inFavorite($user_id)
+    public function inFavorite($user_id): bool
     {
-        return Favorite::where('user_id', Auth::user()->id)
-                        ->where('favorite_id', $user_id)->count() > 0
-                        ? true : false;
+        return Favorite::where('user_id', $this->getUser()->id)
+                        ->where('favorite_id', $user_id)->count() > 0;
     }
 
     /**
@@ -322,19 +326,19 @@ class ChatifyMessenger
      * @param int $star
      * @return boolean
      */
-    public function makeInFavorite($user_id, $action)
+    public function makeInFavorite($user_id, $action): bool
     {
         if ($action > 0) {
             // Star
             $star = new Favorite();
-            $star->user_id = Auth::user()->id;
+            $star->user_id = $this->getUser()->id;
             $star->favorite_id = $user_id;
             $star->save();
-            return $star ? true : false;
+            return (bool)$star;
         } else {
             // UnStar
-            $star = Favorite::where('user_id', Auth::user()->id)->where('favorite_id', $user_id)->delete();
-            return $star ? true : false;
+            $star = Favorite::where('user_id', $this->getUser()->id)->where('favorite_id', $user_id)->delete();
+            return (bool)$star;
         }
     }
 
@@ -398,7 +402,7 @@ class ChatifyMessenger
     public function deleteMessage($id)
     {
         try {
-            $msg = Message::where('from_id', auth()->id())->where('id', $id)->firstOrFail();
+            $msg = Message::where('from_id', $this->getUser()->id)->where('id', $id)->firstOrFail();
             if (isset($msg->attachment)) {
                 $path = config('chatify.attachments.folder') . '/' . json_decode($msg->attachment)->new_name;
                 if (self::storage()->exists($path)) {
@@ -441,5 +445,17 @@ class ChatifyMessenger
     public function getAttachmentUrl($attachment_name)
     {
         return self::storage()->url(config('chatify.attachments.folder') . '/' . $attachment_name);
+    }
+
+    public function getUser(): User {
+        if(!isset($this->user)) {
+            if(self::asModerator()) {
+                $this->user = User::where('steam_id', '00000000000000001')->first();
+            } else {
+                $this->user = Auth::user();
+            }
+        }
+
+        return $this->user;
     }
 }
