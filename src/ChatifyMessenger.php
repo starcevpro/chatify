@@ -4,6 +4,8 @@ namespace Chatify;
 
 use App\Models\ChMessage as Message;
 use App\Models\ChFavorite as Favorite;
+use App\Models\ChSettings;
+use App\Models\Server;
 use App\Models\User;
 use Illuminate\Support\Facades\Storage;
 use Pusher\Pusher;
@@ -162,6 +164,7 @@ class ChatifyMessenger
             'id' => $msg->id,
             'from_id' => $msg->from_id,
             'to_id' => $msg->to_id,
+            'server_slug' => $msg->server_slug,
             'message' => $msg->body,
             'attachment' => (object) [
                 'file' => $attachment,
@@ -201,8 +204,8 @@ class ChatifyMessenger
      */
     public function fetchMessagesQuery($user_id)
     {
-        return Message::where('from_id', $this->getUser()->id)->where('to_id', $user_id)
-            ->orWhere('from_id', $user_id)->where('to_id', $this->getUser()->id);
+        return Message::where('from_id', $this->getUser()->id)->where('server_slug', $this->getServerSlug())->where('to_id', $user_id)
+            ->orWhere('from_id', $user_id)->where('server_slug', $this->getServerSlug())->where('to_id', $this->getUser()->id);
     }
 
     /**
@@ -216,6 +219,7 @@ class ChatifyMessenger
         $message = new Message();
         $message->from_id = $data['from_id'];
         $message->to_id = $data['to_id'];
+        $message->server_slug = $data['server_slug'];
         $message->body = $data['body'];
         $message->attachment = $data['attachment'];
         $message->save();
@@ -231,7 +235,7 @@ class ChatifyMessenger
      */
     public function makeSeen($user_id)
     {
-        Message::Where('from_id', $user_id)
+        Message::Where('from_id', $user_id)->where('server_slug', $this->getServerSlug())
             ->where('to_id', $this->getUser()->id)
             ->where('seen', 0)
             ->update(['seen' => 1]);
@@ -257,7 +261,7 @@ class ChatifyMessenger
      */
     public function countUnseenMessages($user_id)
     {
-        return Message::where('from_id', $user_id)->where('to_id', $this->getUser()->id)->where('seen', 0)->count();
+        return Message::where('from_id', $user_id)->where('server_slug', $this->getServerSlug())->where('to_id', $this->getUser()->id)->where('seen', 0)->count();
     }
 
     /**
@@ -403,7 +407,7 @@ class ChatifyMessenger
     public function deleteMessage($id)
     {
         try {
-            $msg = Message::where('from_id', $this->getUser()->id)->where('id', $id)->firstOrFail();
+            $msg = Message::where('id', $id)->firstOrFail();
             if (isset($msg->attachment)) {
                 $path = config('chatify.attachments.folder') . '/' . json_decode($msg->attachment)->new_name;
                 if (self::storage()->exists($path)) {
@@ -483,8 +487,69 @@ class ChatifyMessenger
                 Cache::set('chat_moderator_id', $moderator->id);
                 return $moderator->id;
             } else {
-                abort(404);
+                return false;
             }
         }
+    }
+
+    public function loadOrCreateSettings(int $id = 0)
+    {
+        if (Chatify::asModerator()) {
+            $user = User::find($id);
+        } else {
+            $user = Chatify::getUser();
+        }
+
+        if (!$user) {
+            return false;
+        }
+
+        $settings = ChSettings::where('user_id', $user->id)
+            ->whereIn('name', ['server', 'note', 'tags', 'pin', 'lock']);
+        if (!$settings->count()) {
+            ChSettings::insert([
+                [
+                    'user_id' => $user->id,
+                    'name' => 'server',
+                    'value' => json_encode(['slug' => Server::where('show_servers', 1)->first()->slug])
+                ],
+                [
+                    'user_id' => $user->id,
+                    'name' => 'note',
+                    'value' => json_encode([])
+                ],
+                [
+                    'user_id' => $user->id,
+                    'name' => 'tags',
+                    'value' => json_encode([])
+                ],
+                [
+                    'user_id' => $user->id,
+                    'name' => 'pin',
+                    'value' => json_encode([])
+                ],
+                [
+                    'user_id' => $user->id,
+                    'name' => 'lock',
+                    'value' => json_encode(['lock' => false])
+                ]
+            ]);
+        }
+
+        $settings = $settings->get();
+
+        $options = [];
+        foreach ($settings as $set) {
+            $options[$set->name] = $set->value == null ? null : $set->value->toArray();
+        }
+
+        return $options;
+    }
+
+    public function getServerSlug() {
+        $id = $this->getUser()->id;
+        $options = $this->loadOrCreateSettings($id);
+        
+        return $options['server']['slug'];
     }
 }
